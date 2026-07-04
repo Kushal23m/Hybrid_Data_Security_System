@@ -4,6 +4,8 @@
   "description": "Deep learning framework for Identifying and Analyzing of hidden data",
   "main": "index.js",
   "scripts": {
+    "start": "node app.js",
+    "dev": "npx nodemon app.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -19,7 +21,10 @@
   },
   "homepage": "https://github.com/Poorvaj-HV/Steganography---A-Middleware-Application#readme",
   "dependencies": {
+    "bcrypt": "^5.1.0",
+    "cloudinary": "^1.37.0",
     "connect-flash": "^0.1.1",
+    "dotenv": "^16.6.1",
     "ejs": "^3.1.10",
     "ejs-mate": "^4.0.0",
     "express": "^5.1.0",
@@ -29,8 +34,12 @@
     "method-override": "^3.0.0",
     "mongoose": "^8.19.2",
     "multer": "^2.0.2",
+    "multer-storage-cloudinary": "^4.0.0",
+    "nodemailer": "^6.9.4",
     "nodemon": "^3.1.10",
     "npm": "^11.6.0",
-    "sharp": "^0.34.4"
+    "sharp": "^0.34.4",
+    "streamifier": "^0.1.1",
+    "validator": "^13.9.0"
   }
 }

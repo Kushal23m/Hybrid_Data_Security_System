@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const app = express();
 const path = require('path');
@@ -19,7 +20,8 @@ const pagesRoutes = require('./routes/pages.js');
 
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(methodOverride('_method'));
 app.engine('ejs', ejsMate);
 app.use(express.static(path.join(__dirname, "/public")));
@@ -78,16 +80,17 @@ app.listen(8000, () => {
     console.log('Server is running on port 8000');
 });
 
+app.get('/', (req, res) => {
+    res.redirect('/home');
+});
+
 app.use((req, res, next) => {
     next(new ExpressError(404, 'Page Not Found..!!'));
 });
 
 app.use((err, req, res, next) => {
+    console.error(err.stack || err);
     let { statusCode=500, message="Something went wrong..!!" } = err;
     res.status(statusCode).render('error.ejs', { message });
     // res.status(statusCode).send(message);
-});
-
-app.get('/', (req, res) => {
-    res.send('Hii Poovi, you are on root page..!!');
 });

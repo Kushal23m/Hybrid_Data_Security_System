@@ -2,14 +2,31 @@ const mongoose = require('mongoose');
 const Schema = mongoose.Schema;
 
 const encodeSchema = new Schema({
+    title: {
+        type: String,
+        required: true,
+        trim: true,
+    },
+    originalImage: {
+        url: String,
+        filename: String,
+    },
+    stegoImage: {
+        url: String,
+        filename: String,
+    },
     email: {
         type: String,
         required: true,
     },
-    image: {
+    password: {
         type: String,
         required: true,
-    }
+    },
+    createdAt: {
+        type: Date,
+        default: Date.now,
+    },
 });
 
 const Encode = mongoose.model('Encode', encodeSchema);

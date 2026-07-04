@@ -5,14 +5,14 @@ const Encode = require('../models/encode.js');
 const { encodeSchema, decodeSchema } = require('../schema.js');
 const ExpressError = require('../utils/ExpressError.js');
 const multer = require('multer');
-const { storage, cloudinary } = require('../cloudConfig.js');
+const { storage, cloudinary, uploadBufferToStorage } = require('../cloudConfig.js');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 const streamifier = require('streamifier');
 const bcrypt = require('bcrypt');
 const validator = require('validator');
 
-const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
+const fetch = globalThis.fetch ? globalThis.fetch.bind(globalThis) : (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
 const { hideMessage, extractMessage } = require('../utils/steganography.js');
 
@@ -24,20 +24,59 @@ const memoryUpload = multer({ storage: multer.memoryStorage() });
 
 // helper to upload a Buffer to Cloudinary and return the upload result
 function uploadBufferToCloudinary(buffer, folder = '', filename = '') {
-    return new Promise((resolve, reject) => {
-        const uploadStream = cloudinary.uploader.upload_stream(
-            { folder, public_id: filename ? `${filename}-${Date.now()}` : undefined },
-            (error, result) => {
-                if (error) return reject(error);
-                resolve(result);
-            }
-        );
-        streamifier.createReadStream(buffer).pipe(uploadStream);
+    return uploadBufferToStorage(buffer, folder, filename);
+}
+
+function getEncodePayload(req) {
+    const body = req.body || {};
+    if (body.Encode && typeof body.Encode === 'object' && !Array.isArray(body.Encode)) {
+        return body.Encode;
+    }
+    const payload = {};
+    Object.entries(body).forEach(([key, value]) => {
+        const match = key.match(/^Encode\[(.+)\]$/);
+        if (match) payload[match[1]] = value;
     });
+    return payload;
+}
+
+function getDecodePayload(req) {
+    const body = req.body || {};
+    if (body.Decode && typeof body.Decode === 'object' && !Array.isArray(body.Decode)) {
+        return body.Decode;
+    }
+    const payload = {};
+    Object.entries(body).forEach(([key, value]) => {
+        const match = key.match(/^Decode\[(.+)\]$/);
+        if (match) payload[match[1]] = value;
+    });
+    return payload;
 }
 
 // OTP storage
 const otpStore = new Map();
+
+function sendOtpEmail(email, otp, purpose) {
+    const user = process.env.EMAIL_USER;
+    const pass = process.env.EMAIL_PASS;
+
+    if (user && pass) {
+        const transporter = nodemailer.createTransport({
+            service: 'gmail',
+            auth: { user, pass }
+        });
+
+        return transporter.sendMail({
+            from: user,
+            to: email,
+            subject: purpose === 'decode' ? 'OTP for Message Decryption' : 'Your OTP for Steganography Verification',
+            text: `Your OTP is: ${otp}. It is valid for 5 minutes.`
+        });
+    }
+
+    console.log(`[OTP ${purpose}] to=${email} otp=${otp}`);
+    return Promise.resolve({ messageId: 'local-dev' });
+}
 
 // Email transporter using Gmail App Password
 const transporter = nodemailer.createTransport({
@@ -58,39 +97,38 @@ router.get('/encode', (req, res) => {
 });
 
 router.post('/send-otp', async ( req, res ) => {
-    const { email } = req.body;
-    if (!validator.isEmail(email)) {
-        return res.status(400).json({ error: 'Invalid email address' });
-    }
-
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    otpStore.set(email, { otp, createdAt: Date.now() });
-
     try {
-        await transporter.sendMail({
-            from: process.env.EMAIL_USER,
-            to: email,
-            subject: 'Your OTP for Steganography Verification',
-            text: `Your OTP is: ${otp}. It is valid for 5 minutes.`
-        });
+        const body = req.body && typeof req.body === 'object' ? req.body : {};
+        const email = body.email || body.Email || body.Decode?.email || body.Encode?.email;
+        console.log('send-otp body:', body);
+        if (!validator.isEmail(email)) {
+            return res.status(400).json({ error: 'Invalid email address' });
+        }
 
-        res.status(200).json({ message: 'OTP sent successfully to your email.' });
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        otpStore.set(email, { otp, createdAt: Date.now() });
+
+        await sendOtpEmail(email, otp, 'encode');
+
+        return res.status(200).json({ message: 'OTP sent successfully to your email.' });
     } catch (err) {
         console.error('Email sending failed: ', err);
-        res.status(500).json({ error: 'Failed to send OTP. Please try again later.'});
+        return res.status(500).json({ error: 'Failed to send OTP. Please try again later.', detail: err.message });
     }
 });
 
 // Encode route (with OTP validation)
 router.post('/encode', memoryUpload.single('originalImage'), wrapAsync(async (req, res) => {
+    const payload = getEncodePayload(req);
+
     // Validate the schema
     let { error } = encodeSchema.validate({
         Encode: {
-            title: req.body.Encode.title,
-            message: req.body.Encode.message,
-            email: req.body.Encode.email,
-            otp: req.body.Encode.otp,
-            password: req.body.Encode.password
+            title: payload.title,
+            message: payload.message,
+            email: payload.email,
+            otp: payload.otp,
+            password: payload.password
         }
     });
 
@@ -99,7 +137,7 @@ router.post('/encode', memoryUpload.single('originalImage'), wrapAsync(async (re
         throw new ExpressError(400, errMsg);
     }
 
-    const { title, message, email, otp, password } = req.body.Encode;
+    const { title, message, email, otp, password } = payload;
 
     // Checking for duplicate title for this email
     const existingTitle = await Encode.findOne({ email, title });
@@ -125,8 +163,8 @@ router.post('/encode', memoryUpload.single('originalImage'), wrapAsync(async (re
     encrypted += cipher.final('hex');
     const authTag = cipher.getAuthTag().toString('hex');
 
-    const payload = `${iv.toString('hex')}:${authTag}:${encrypted}`;
-    const stegoBuffer = await hideMessage(req.file.buffer, payload);
+    const encodedPayload = `${iv.toString('hex')}:${authTag}:${encrypted}`;
+    const stegoBuffer = await hideMessage(req.file.buffer, encodedPayload);
 
     // Upload stego image
     const stegoUpload = await uploadBufferToCloudinary(stegoBuffer, 'stegohide_DEV/stegos', 'stego');
@@ -169,7 +207,8 @@ router.get('/decode', (req, res) => {
 
 // verify-decode route
 router.post('/verify-decode', wrapAsync(async (req, res) => {
-    const { email, password } = req.body.Decode || {};
+    const payload = getDecodePayload(req);
+    const { email, password } = payload;
     if (!email || !password) {
         return res.status(400).json({ error: 'Email and password required' });
     }
@@ -200,12 +239,7 @@ router.post('/verify-decode', wrapAsync(async (req, res) => {
     matched.forEach(r => otpStore.set(r._id.toString(), { otp, createdAt }));
 
     // send OTP to user's email
-    await transporter.sendMail({
-        from: process.env.EMAIL_USER,
-        to: email,
-        subject: 'OTP for Message Decryption',
-        text: `Your OTP is: ${otp}. Valid for 5 minutes.`
-    });
+    await sendOtpEmail(email, otp, 'decode');
 
     // return only matched encryptions to client
     const encryptions = matched.map(r => ({
@@ -219,7 +253,8 @@ router.post('/verify-decode', wrapAsync(async (req, res) => {
 
 // reveal-message route
 router.post('/reveal-message', wrapAsync(async (req, res) => {
-    const { email, password, otp, encryptionId } = req.body.Decode;
+    const payload = getDecodePayload(req);
+    const { email, password, otp, encryptionId } = payload;
 
     // Verify OTP using encryptionId instead of email
     const stored = otpStore.get(encryptionId);
@@ -240,8 +275,11 @@ router.post('/reveal-message', wrapAsync(async (req, res) => {
             return res.status(401).json({ error: 'Invalid password' });
         }
 
-        // Download stego image
-        const response = await fetch(record.stegoImage.url);
+        // Download stego image (ensure absolute URL for local uploads)
+        const imageUrl = record.stegoImage.url && record.stegoImage.url.startsWith('http')
+            ? record.stegoImage.url
+            : `${req.protocol}://${req.get('host')}${record.stegoImage.url}`;
+        const response = await fetch(imageUrl);
         if (!response.ok) {
             console.error('Failed to download stego image, status:', response.status);
             return res.status(500).json({ error: 'Failed to download stego image' });
@@ -261,8 +299,9 @@ router.post('/reveal-message', wrapAsync(async (req, res) => {
         const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
         decipher.setAuthTag(authTag);
 
-        let decrypted = decipher.update(encrypted, 'hex', 'utf8');
-        decrypted += decipher.final('utf8');
+        // Decrypt using Buffer style to avoid encoding issues
+        const decryptedBuf = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+        const decrypted = decryptedBuf.toString('utf8');
 
         // Clear OTP using encryptionId
         otpStore.delete(encryptionId);
@@ -338,8 +377,11 @@ router.post('/extract-message', wrapAsync(async (req, res) => {
             return res.json({ success: false, error: 'Invalid password' });
         }
 
-        // Download stego image
-        const response = await fetch(record.stegoImage.url);
+        // Download stego image (ensure absolute URL for local uploads)
+        const imageUrl = record.stegoImage.url && record.stegoImage.url.startsWith('http')
+            ? record.stegoImage.url
+            : `${req.protocol}://${req.get('host')}${record.stegoImage.url}`;
+        const response = await fetch(imageUrl);
         if (!response.ok) {
             return res.json({ success: false, error: 'Failed to download stego image' });
         }
@@ -359,8 +401,8 @@ router.post('/extract-message', wrapAsync(async (req, res) => {
         const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
         decipher.setAuthTag(authTag);
 
-        let decrypted = decipher.update(encrypted, 'hex', 'utf8');
-        decrypted += decipher.final('utf8');
+        const decryptedBuf = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+        const decrypted = decryptedBuf.toString('utf8');
 
         res.json({ success: true, message: decrypted });
         
