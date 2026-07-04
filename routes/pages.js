@@ -314,9 +314,9 @@ router.post('/reveal-message', wrapAsync(async (req, res) => {
 }));
 
 // Admin credentials
-const ADMIN_EMAIL = 'kushalmj02@gmail.com';
-const ADMIN_USERNAME = 'Kush23';
-const ADMIN_PASSWORD = '2123k';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'kushalmj02@gmail.com';
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'Kush23';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '2123k';
 
 // Admin authentication middleware
 function requireAdmin(req, res, next) {     // middleware to check if admin is logged in
@@ -334,9 +334,23 @@ router.get('/admin', (req, res) => {    // admin login page
 });
 
 router.post('/admin/login', (req, res) => {     // form action routes to here
-    const { username, password } = req.body;
+    const adminId = req.body.adminId || req.body.username || req.body.email;
+    const password = req.body.password;
 
-    if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
+    if (!adminId || !password) {
+        req.flash('error', 'Enter admin email/username and password');
+        return res.redirect('/admin');
+    }
+
+    const validAdmin = (adminId === ADMIN_USERNAME || adminId === ADMIN_EMAIL) && password === ADMIN_PASSWORD;
+    console.log('[ADMIN LOGIN] adminId=', adminId, 'ADMIN_USERNAME=', ADMIN_USERNAME, 'ADMIN_EMAIL=', ADMIN_EMAIL, 'passwordMatch=', password === ADMIN_PASSWORD);
+
+    // Debug helper: if query ?debug=1 return diagnostic JSON (useful for API testing)
+    if (req.query && req.query.debug === '1') {
+        return res.json({ adminId, ADMIN_USERNAME, ADMIN_EMAIL, passwordProvided: !!password, passwordMatch: password === ADMIN_PASSWORD, validAdmin });
+    }
+
+    if (validAdmin) {
         req.session.isAdmin = true;
         req.flash('success', 'Logged in successfully as admin');
         res.redirect('/listings');
