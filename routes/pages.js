@@ -314,9 +314,9 @@ router.post('/reveal-message', wrapAsync(async (req, res) => {
 }));
 
 // Admin credentials
-const ADMIN_EMAIL = 'poorvaj@gmail.com';
-const ADMIN_USERNAME = 'poorvaj';
-const ADMIN_PASSWORD = 'P29';
+const ADMIN_EMAIL = 'kushalmj02@gmail.com';
+const ADMIN_USERNAME = 'Kush23';
+const ADMIN_PASSWORD = '2123k';
 
 // Admin authentication middleware
 function requireAdmin(req, res, next) {     // middleware to check if admin is logged in
